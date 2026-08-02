@@ -114,10 +114,28 @@
     #gameWrapper {
       position: relative;
       display: inline-block;
+      /* Sized immediately at first paint (before resizeGame() ever runs)
+         so there's no frame where this shrink-wraps to the canvas's
+         unstyled default box. On slow devices, script parsing/execution
+         of the whole engine can take long enough for that in-between
+         frame to be visible — this rule removes the gap entirely rather
+         than just making it shorter. resizeGame() overwrites these with
+         the precise letterboxed values as soon as it runs; these are
+         only ever seen for the first paint or two. */
+      width: 100%;
+      height: 100%;
+      max-width: 100vw;
+      max-height: 100dvh;
     }
 
     canvas {
       display: block;
+      /* Matches #gameWrapper's rationale above: an unsized <canvas> defaults
+         to 300x150 CSS px per spec, which is what was causing everything
+         positioned inset:0 on it to cram into a tiny box until JS resized
+         it. Filling the wrapper here means first paint is already correct. */
+      width: 100%;
+      height: 100%;
       border: 5px solid var(--ink);
       border-radius: 14px;
       box-shadow:
@@ -1137,21 +1155,37 @@
 
     .touch-cluster {
       position: absolute;
-      bottom: 4%;
-      display: flex;
-      flex-direction: row;
-      align-items: center;
-      gap: 14px;
+      inset: 0;
       pointer-events: none;
     }
-    .touch-cluster.p1 { left: 3%; }
-    .touch-cluster.p2 { right: 3%; flex-direction: row-reverse; }
+
+    /* Invisible full-height catch zones for the floating joystick. P1
+       owns the left half, P2 (when active, pvp only) the right half of
+       that same left region — split down the middle so neither zone
+       steals the other's touches. Sits above the background but below
+       the buttons/stick themselves in stacking, and never intercepts a
+       touch meant for a button since those have their own listeners
+       registered on the same event and buttons visually sit outside
+       this zone's likely tap area (bottom-right corner vs left half). */
+    .touch-float-zone {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 0;
+      width: 60%;
+      pointer-events: auto;
+      touch-action: none;
+    }
+    #floatZoneP2 { left: 0; width: 30%; display: none; } /* positioned/enabled by JS only in pvp */
 
     /* ── ANALOG STICK ──
        Jump lives entirely in the stick's own gesture (see updateStick());
-       there's no separate button to lay out here. */
+       there's no separate button to lay out here. Positioned absolutely
+       (not relative-in-flexbox) so the floating-joystick logic can move
+       its left/top to the initial touch point; falls back to a resting
+       spot via .at-rest when no touch is active. */
     .touch-stick-base {
-      position: relative;
+      position: absolute;
       width: 104px;
       height: 104px;
       border-radius: 50%;
@@ -1161,7 +1195,10 @@
       pointer-events: auto;
       touch-action: none;
       flex-shrink: 0;
+      opacity: 0;
+      transition: opacity 0.12s;
     }
+    .touch-stick-base.floating-visible { opacity: 1; }
     .touch-stick-knob {
       position: absolute;
       left: 50%;
@@ -1186,21 +1223,40 @@
       transition: transform 0.14s cubic-bezier(.34,1.56,.64,1); /* springy return */
     }
 
-    /* ── SKILL / SUPER BUTTONS ──
-       Row sitting between the stick and mid-screen, level with the
-       stick's own vertical center. Order is mirrored per side:
-       nearest-to-stick button first in DOM/visual order, so the row
-       reads Skill-Super moving outward from the stick on P1, and
-       Super-Skill moving outward from the stick on P2. */
+    /* ── ACTION BUTTON CLUSTER ──
+       Industry-standard split layout: P1's action buttons live in the
+       bottom-right corner, clear of the left-side movement thumb, on a
+       thumb-friendly diamond arc. Architected as a generic slot grid
+       (see ACTION_LAYOUTS in JS) so "Attack / Jump / Block" (or any
+       future action) drops in without touching this CSS — every button
+       is just another .touch-btn with a data-action + data-slot.
+       Opacity is 50% at rest so the game world stays visible under the
+       thumb; .pressed brightens it for tactile confirmation. */
     .touch-actions {
       pointer-events: none;
+      position: absolute;
+      right: max(3%, env(safe-area-inset-right, 0px));
+      bottom: max(4%, env(safe-area-inset-bottom, 0px));
+      width: 168px;
+      height: 168px;
+    }
+    .touch-actions.p2-side {
+      /* 2-player mode: P2's own cluster sits in its own bottom-right-ish
+         dock (mirrored from P1's) rather than the diamond, since P2's
+         stick floats over the right half and there's less room to spare. */
+      position: absolute;
+      right: 3%;
+      bottom: 4%;
+      width: auto;
+      height: auto;
       display: flex;
-      flex-direction: row;
+      flex-direction: row-reverse;
       align-items: center;
-      gap: 10px;
+      gap: 14px;
     }
     .touch-btn {
       pointer-events: auto;
+      position: absolute;
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -1208,13 +1264,20 @@
       gap: 1px;
       border-radius: 50%;
       touch-action: none;
-      transition: background 0.08s, transform 0.08s, box-shadow 0.08s;
+      opacity: 0.5;
+      transition: opacity 0.08s, transform 0.08s, box-shadow 0.08s;
       box-shadow: 0 3px 8px rgba(0,0,0,0.25);
     }
-    .touch-actions .touch-btn {
-      width: 43.5px;
-      height: 43.5px;
+    /* Forgiving hitbox: invisible tap target ~30% larger than the visible
+       circle. Absolutely-positioned pseudo-element costs no layout and
+       doesn't shrink the visual spacing between neighboring buttons. */
+    .touch-btn::before {
+      content: '';
+      position: absolute;
+      inset: -15%;
     }
+    .touch-btn.pressed { opacity: 0.95; }
+    .p2-side .touch-btn { position: static; width: 43.5px; height: 43.5px; }
     .touch-btn .tb-icon  { font-size: 14.25px; line-height: 1; text-shadow: 0 1px 3px rgba(0,0,0,0.55); }
     .touch-btn .tb-label {
       font-family: 'Baloo 2', sans-serif;
@@ -1224,18 +1287,24 @@
       text-transform: uppercase;
       text-shadow: 0 1px 3px rgba(0,0,0,0.55);
     }
-    .ta-special {
-      background: transparent;
-      border: 3px solid rgba(255,255,255,0.55);
-      color: #1c9fe0;
-    }
+    .ta-special { background: rgba(15,15,20,0.35); border: 3px solid rgba(255,255,255,0.55); color: #1c9fe0; }
     .ta-special.pressed { transform: scale(0.90); box-shadow: 0 0 14px rgba(95,216,255,0.85); }
-    .ta-attack {
-      background: transparent;
-      border: 3px solid rgba(255,255,255,0.55);
-      color: #ffb92e;
-    }
+    .ta-attack  { background: rgba(15,15,20,0.35); border: 3px solid rgba(255,255,255,0.55); color: #ffb92e; }
     .ta-attack.pressed { transform: scale(0.90); box-shadow: 0 0 14px rgba(255,201,60,0.85); }
+    .ta-jump    { background: rgba(15,15,20,0.35); border: 3px solid rgba(255,255,255,0.55); color: #7ee081; }
+    .ta-jump.pressed { transform: scale(0.90); box-shadow: 0 0 14px rgba(126,224,129,0.85); }
+    .ta-block   { background: rgba(15,15,20,0.35); border: 3px solid rgba(255,255,255,0.55); color: #d0a8ff; }
+    .ta-block.pressed { transform: scale(0.90); box-shadow: 0 0 14px rgba(208,168,255,0.85); }
+
+    /* Diamond slot positions inside the 168x168 .touch-actions box.
+       "primary" (largest, closest to thumb rest / bottom-right corner)
+       is where Attack belongs — the highest-frequency action. Others
+       sit >=18px clear of it in every direction so fast mashing can't
+       cross-hit a neighbor. Add more slots here as new actions arrive. */
+    .touch-btn[data-slot="primary"] { width: 54px; height: 54px; right: 0;    bottom: 0; }
+    .touch-btn[data-slot="up"]      { width: 46px; height: 46px; right: 8px;  bottom: 70px; }
+    .touch-btn[data-slot="left"]    { width: 46px; height: 46px; right: 70px; bottom: 8px; }
+    .touch-btn[data-slot="far"]     { width: 46px; height: 46px; right: 66px; bottom: 78px; }
 
     #touchPauseBtn {
       position: absolute;
@@ -1293,7 +1362,12 @@
     @media (max-width: 720px) {
       .touch-stick-base { width: 88px; height: 88px; }
       .touch-stick-knob { width: 48px; height: 48px; margin-left: -24px; margin-top: -24px; }
-      .touch-actions .touch-btn { width: 37.5px; height: 37.5px; }
+      .p2-side .touch-btn { width: 37.5px; height: 37.5px; }
+      .touch-actions { width: 144px; height: 144px; }
+      .touch-btn[data-slot="primary"] { width: 46px; height: 46px; }
+      .touch-btn[data-slot="up"]      { width: 39px; height: 39px; right: 7px;  bottom: 60px; }
+      .touch-btn[data-slot="left"]    { width: 39px; height: 39px; right: 60px; bottom: 7px; }
+      .touch-btn[data-slot="far"]     { width: 39px; height: 39px; right: 56px; bottom: 67px; }
       .touch-btn .tb-icon { font-size: 12px; }
       .touch-btn .tb-label { font-size: 6px; }
     }
@@ -1342,6 +1416,7 @@
       .landing-navbar { height: 40px; }
       .landing-gear-btn { width: 32px; height: 32px; font-size: 15px; border-radius: 8px; }
       .landing-title { font-size: 22px; letter-spacing: 0.5px; }
+      #screenLanding .game-subtitle { margin-top: 0; }
       .mode-row { gap: 14px; }
       .mode-tile { width: 56px; height: 56px; border-radius: 10px; }
       .mode-col { gap: 8px; }
@@ -1386,29 +1461,47 @@
 <body>
 
 <div id="gameWrapper">
-  <canvas id="gameCanvas"></canvas>
+  <canvas id="gameCanvas" width="960" height="540"></canvas>
 
   <!-- TOUCH CONTROLS — populated/shown by initTouchControls() only on
        touch-capable devices, only while state === PLAYING. -->
   <div id="touchControls">
+    <!-- Floating-joystick catch zones: invisible, cover the half of the
+         screen each stick "floats" within. A touchstart anywhere in a
+         zone repositions that player's stick base to the touch point
+         (see wireFloatingZone in JS), then normal drag math takes over
+         unchanged. P1's zone is the full left half in 1P (vsAI); in 2P
+         it's clipped to the left half minus a little margin so P1 and
+         P2 zones never overlap. -->
+    <div class="touch-float-zone" id="floatZoneP1" data-player="p1"></div>
+    <div class="touch-float-zone" id="floatZoneP2" data-player="p2"></div>
+
     <div class="touch-cluster p1">
       <div class="touch-stick-base" data-player="p1" id="stickBaseP1">
         <div class="touch-stick-knob" id="stickKnobP1"></div>
-      </div>
-      <div class="touch-actions" data-player="p1">
-        <div class="touch-btn ta-attack"  data-action="attack"><span class="tb-icon">👊</span><span class="tb-label">Skill</span></div>
-        <div class="touch-btn ta-special" data-action="special"><span class="tb-icon">✦</span><span class="tb-label">Super</span></div>
       </div>
     </div>
     <div class="touch-cluster p2" id="touchClusterP2">
       <div class="touch-stick-base" data-player="p2" id="stickBaseP2">
         <div class="touch-stick-knob" id="stickKnobP2"></div>
       </div>
-      <div class="touch-actions" data-player="p2">
+      <div class="touch-actions p2-side" data-player="p2">
         <div class="touch-btn ta-special" data-action="special"><span class="tb-icon">✦</span><span class="tb-label">Super</span></div>
         <div class="touch-btn ta-attack"  data-action="attack"><span class="tb-icon">👊</span><span class="tb-label">Skill</span></div>
       </div>
     </div>
+  </div>
+
+  <!-- P1 ACTION CLUSTER — bottom-right corner, independent of the P1
+       .touch-cluster above so it can dock to a screen corner instead of
+       riding beside the joystick. See ACTION_LAYOUTS in JS: each button
+       is data-action (game action) + data-slot (diamond position). Add
+       new actions (e.g. Block) here and in ACTION_LAYOUTS together. -->
+  <div class="touch-actions" data-player="p1" id="touchActionsP1">
+    <div class="touch-btn ta-attack"  data-action="attack"  data-slot="primary"><span class="tb-icon">👊</span><span class="tb-label">Skill</span></div>
+    <div class="touch-btn ta-jump"    data-action="jump"    data-slot="up"><span class="tb-icon">⬆</span><span class="tb-label">Jump</span></div>
+    <div class="touch-btn ta-block"   data-action="crouch"  data-slot="left"><span class="tb-icon">🛡</span><span class="tb-label">Block</span></div>
+    <div class="touch-btn ta-special" data-action="special" data-slot="far"><span class="tb-icon">✦</span><span class="tb-label">Super</span></div>
   </div>
   <div id="touchPauseBtn" title="Pause">⏸</div>
 
@@ -1420,6 +1513,7 @@
   <!-- TITLE / LANDING SCREEN — first thing players see -->
   <div class="screen" id="screenLanding">
     <div class="landing-navbar">
+      <button class="landing-gear-btn" id="btnFullscreenToggle" title="Fullscreen" style="display:none;">⛶</button>
       <button class="landing-gear-btn" id="btnLandingSettings" title="Settings">⚙</button>
     </div>
     <div class="landing-title">STICKMAN ARSENAL</div>
@@ -3380,7 +3474,12 @@ const FullscreenCtl = {
     // for free (request() is a no-op once actually fullscreen), so a
     // rejected first attempt, or an OS-forced exit later, both self-heal
     // on the player's very next touch instead of leaving them stuck.
-    const arm = () => this.request();
+    // Auto-fullscreen-on-any-tap is a touch-device convenience only (edge-
+    // to-edge, no browser chrome to reclaim any other way). On desktop the
+    // player has an explicit toggle button for this (see btnFullscreenToggle
+    // wiring) — fullscreen must never fire from an incidental click/keypress
+    // there, so this listener no-ops entirely unless IS_TOUCH is true.
+    const arm = () => { if (IS_TOUCH) this.request(); };
     document.addEventListener('pointerdown', arm, { capture: true, passive: true });
     document.addEventListener('touchstart',  arm, { capture: true, passive: true });
     document.addEventListener('click',       arm, { capture: true });
@@ -3388,14 +3487,15 @@ const FullscreenCtl = {
     // Some Android browsers/WebViews drop fullscreen on rotate; some also
     // drop it when the tab is backgrounded then restored. Neither is a
     // choice the player made, so silently try to restore it rather than
-    // leaving them windowed until their next incidental tap.
+    // leaving them windowed until their next incidental tap. Touch-only,
+    // same reasoning as arm() above.
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible' && this._everActive && !this.isActive()) {
+      if (IS_TOUCH && document.visibilityState === 'visible' && this._everActive && !this.isActive()) {
         this.request();
       }
     });
     window.addEventListener('orientationchange', () => {
-      if (this._everActive && !this.isActive()) this.request();
+      if (IS_TOUCH && this._everActive && !this.isActive()) this.request();
     });
   }
 };
@@ -3420,6 +3520,15 @@ const keysJustPressed = {};
 // Shared by the real keyboard listeners below AND the touch-control
 // buttons, so both input methods drive the exact same per-frame state
 // the game logic reads — no parallel/duplicated input path to drift.
+// Tiny tactile confirmation on supported devices (Android Chrome; iOS
+// Safari has no Vibration API and silently no-ops here). Kept to a short
+// single pulse — anything longer reads as buzzy rather than crisp. Safe
+// to call from anywhere (button presses here; also usable from combat
+// code on a landed hit, e.g. `hapticPulse(30)`).
+function hapticPulse(ms = 20) {
+  if (navigator.vibrate) { try { navigator.vibrate(ms); } catch (e) {} }
+}
+
 function simulateKeyDown(code) {
   if (!keys[code]) keysJustPressed[code] = true;
   keys[code] = true;
@@ -3479,12 +3588,23 @@ function releaseAllKeys() {
 // a real touch/pointer event proves it — the guess is allowed to be wrong
 // once, but the game must never get permanently stuck on it.
 function detectTouchCapable() {
+  // Touch-CAPABLE hardware is not the same question as "this player is
+  // using touch right now." Plenty of ordinary Windows laptops/desktops
+  // have a touchscreen digitizer, and on some of them even
+  // `(pointer: coarse) and (hover: none)` still reports true while the
+  // player is actively using a mouse — that media query reflects what
+  // hardware EXISTS, not which input is in use this session, and isn't
+  // reliable enough to gate the whole UI on. So the up-front check here
+  // only trusts signals that identify the DEVICE itself (a real phone/
+  // tablet), never a capability flag that a desktop can also satisfy.
+  // Anything ambiguous is left as keyboard/mouse mode and can only
+  // upgrade to touch mode by a genuine touchstart actually happening —
+  // see onFirstTouchSignal below, which is the decisive, can't-be-wrong
+  // signal: no phantom hardware flag, an actual finger touched the glass.
   const uaData = navigator.userAgentData;
   if (uaData && typeof uaData.mobile === 'boolean' && uaData.mobile) return true;
-  if ('ontouchstart' in window) return true;
-  if ((navigator.maxTouchPoints || 0) > 0) return true;
-  if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) return true;
-  // Legacy UA string fallback for older WebViews/browsers UA-CH hasn't reached.
+  // Legacy UA string fallback for older WebViews/browsers UA-CH hasn't reached
+  // — these are phone/tablet UAs specifically, not just "has touch support".
   if (/Android|iPhone|iPad|iPod|Mobile|Silk|KFAPWI/i.test(navigator.userAgent)) return true;
   return false;
 }
@@ -3658,8 +3778,13 @@ function releaseStick(stick) {
   for (const code of stick.liveKeys) simulateKeyUp(code);
   stick.liveKeys.clear();
   // Drop the springy-return class once the CSS transition has had time to
-  // finish, so the next drag starts perfectly rigid again (no lag).
-  window.setTimeout(() => stick.baseEl.classList.remove('snapping'), 160);
+  // finish, so the next drag starts perfectly rigid again (no lag). Then
+  // fade the base out — floating joysticks disappear between touches
+  // rather than sitting visible at their last spawn point.
+  window.setTimeout(() => {
+    stick.baseEl.classList.remove('snapping');
+    stick.baseEl.classList.remove('floating-visible');
+  }, 160);
 }
 
 // All active sticks share ONE set of window-level move/end listeners
@@ -3667,6 +3792,26 @@ function releaseStick(stick) {
 // duplicate window listeners doing the same iteration per touch event is
 // exactly the kind of redundant-listener waste this game avoids elsewhere.
 const _allSticks = [];
+
+// Floating joystick: on touchstart anywhere in the player's catch zone,
+// the base snaps its center to that exact point (clamped so it never
+// renders partly off-screen), then behaves exactly like a fixed stick
+// for the rest of the drag. This is the standard "floating" pattern
+// used by most mobile fighting/action games (place-of-first-touch, not
+// anchored to a fixed corner).
+const STICK_BASE_HALF = 52; // half of .touch-stick-base's 104px width
+
+function placeStickBase(stick, clientX, clientY) {
+  const wrapperRect = document.getElementById('gameWrapper').getBoundingClientRect();
+  const margin = 8;
+  const x = Math.max(wrapperRect.left + STICK_BASE_HALF + margin,
+              Math.min(clientX, wrapperRect.right - STICK_BASE_HALF - margin));
+  const y = Math.max(wrapperRect.top + STICK_BASE_HALF + margin,
+              Math.min(clientY, wrapperRect.bottom - STICK_BASE_HALF - margin));
+  stick.baseEl.style.left = `${x - wrapperRect.left - STICK_BASE_HALF}px`;
+  stick.baseEl.style.top  = `${y - wrapperRect.top  - STICK_BASE_HALF}px`;
+  return { x, y };
+}
 
 function wireStick(stick) {
   const { baseEl } = stick;
@@ -3677,14 +3822,18 @@ function wireStick(stick) {
     return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
   };
 
-  stick._onStart = (clientX, clientY, pointerId) => {
+  // Called by the floating zone on first touch — places the base, THEN
+  // starts the drag from dead-center (dx=dy=0), so the knob always
+  // begins exactly under the thumb instead of jumping toward wherever
+  // the old fixed base happened to be.
+  stick._onFloatStart = (clientX, clientY, pointerId) => {
     if (inputLocked) return;
     if (stick.activePointerId !== null) return; // already tracking a finger
     stick.activePointerId = pointerId;
-    baseEl.classList.add('active');
+    baseEl.classList.add('active', 'floating-visible');
     baseEl.classList.remove('snapping');
-    const center = getBaseCenter();
-    updateStick(stick, clientX - center.x, clientY - center.y);
+    placeStickBase(stick, clientX, clientY);
+    updateStick(stick, 0, 0);
   };
   stick._onMove = (clientX, clientY, pointerId) => {
     if (stick.activePointerId !== pointerId) return;
@@ -3696,21 +3845,24 @@ function wireStick(stick) {
     releaseStick(stick);
   };
 
-  // Touch path (primary target platform) — only the start listener needs
-  // to live on the stick's own base element; move/end are handled by the
-  // single shared window dispatcher registered once in initTouchControls().
-  baseEl.addEventListener('touchstart', (ev) => {
-    ev.preventDefault();
-    const t = ev.changedTouches[0];
-    stick._onStart(t.clientX, t.clientY, t.identifier);
-  }, { passive: false });
-
   // Mouse/pointer path — touch-capable laptop with a mouse, or a browser
   // touch emulator during QA — uses a fixed synthetic id since there's only
   // ever one mouse.
-  baseEl.addEventListener('mousedown', (ev) => stick._onStart(ev.clientX, ev.clientY, MOUSE_POINTER_ID));
+  baseEl.addEventListener('mousedown', (ev) => stick._onFloatStart(ev.clientX, ev.clientY, MOUSE_POINTER_ID));
 }
 const MOUSE_POINTER_ID = 'mouse';
+
+// Wires a player's invisible catch-zone div: any touchstart landing in
+// it spawns that player's floating stick right there. Zones are sized/
+// positioned per game mode by updateTouchControlsVisibility().
+function wireFloatingZone(zoneEl, stick) {
+  zoneEl.addEventListener('touchstart', (ev) => {
+    ev.preventDefault();
+    const t = ev.changedTouches[0];
+    stick._onFloatStart(t.clientX, t.clientY, t.identifier);
+  }, { passive: false });
+  zoneEl.addEventListener('mousedown', (ev) => stick._onFloatStart(ev.clientX, ev.clientY, MOUSE_POINTER_ID));
+}
 
 // Registered exactly once (guarded by _touchControlsWired in
 // initTouchControls) — dispatches every touch/mouse move-or-release to
@@ -3740,6 +3892,7 @@ function initTouchControls() {
       ev.preventDefault();
       if (inputLocked) return;
       el.classList.add('pressed');
+      hapticPulse(20);
       // re-resolve codes at press-time so a mode switch (vsAI <-> pvp)
       // between rounds is always reflected correctly
       const live = [TOUCH_KEYMAP[player][action]];
@@ -3765,7 +3918,7 @@ function initTouchControls() {
     el.addEventListener('mouseleave', (ev) => { if (el.classList.contains('pressed')) release(ev); });
   };
 
-  container.querySelectorAll('.touch-cluster.p1 .touch-btn')
+  document.getElementById('touchActionsP1').querySelectorAll('.touch-btn')
     .forEach(el => bindButton(el, 'p1'));
   document.querySelectorAll('.touch-cluster.p2 .touch-btn')
     .forEach(el => bindButton(el, 'p2'));
@@ -3774,6 +3927,8 @@ function initTouchControls() {
   _stickP2 = createStickState('p2', document.getElementById('stickBaseP2'), document.getElementById('stickKnobP2'));
   wireStick(_stickP1);
   wireStick(_stickP2);
+  wireFloatingZone(document.getElementById('floatZoneP1'), _stickP1);
+  wireFloatingZone(document.getElementById('floatZoneP2'), _stickP2);
 
   // Shared move/end dispatch — registered once for both sticks (see
   // wireStick's comment on why this isn't per-stick window listeners).
@@ -3813,6 +3968,25 @@ function updateTouchControlsVisibility() {
   pauseBtn.style.display = showControls ? 'flex' : 'none';
   document.getElementById('touchClusterP2').style.display =
     (showControls && gameMode === 'pvp') ? 'flex' : 'none';
+  // P1's action diamond always docks bottom-right (its own element,
+  // outside #touchControls, so it needs its own visibility toggle).
+  document.getElementById('touchActionsP1').style.display =
+    showControls ? 'block' : 'none';
+  // Floating-joystick catch zones: P1 always owns the left half. P2's
+  // zone only exists in pvp — otherwise it's hidden so a stray left-side
+  // touch can't accidentally spawn an unused P2 stick.
+  const zoneP1 = document.getElementById('floatZoneP1');
+  const zoneP2 = document.getElementById('floatZoneP2');
+  zoneP1.style.display = showControls ? 'block' : 'none';
+  if (gameMode === 'pvp') {
+    zoneP1.style.width = '50%';
+    zoneP2.style.left = '50%';
+    zoneP2.style.width = '50%';
+    zoneP2.style.display = showControls ? 'block' : 'none';
+  } else {
+    zoneP1.style.width = '60%';
+    zoneP2.style.display = 'none';
+  }
 
   if (!showControls) {
     if (_stickP1 && _stickP1.activePointerId !== null) releaseStick(_stickP1);
@@ -7396,8 +7570,23 @@ document.getElementById('btnCustomizeFight').addEventListener('click', () => {
   }
 });
 
+// Desktop/keyboard players get an explicit opt-in toggle instead of auto-fullscreen.
+// Hidden entirely on touch devices, which fullscreen automatically on mode-select instead.
+(() => {
+  const btn = document.getElementById('btnFullscreenToggle');
+  if (IS_TOUCH || !btn) return;
+  btn.style.display = '';
+  btn.addEventListener('click', () => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen && document.exitFullscreen();
+    } else {
+      FullscreenCtl.request();
+    }
+  });
+})();
+
 document.getElementById('btnLandingOnePlayer').addEventListener('click', () => {
-  FullscreenCtl.request();
+  if (IS_TOUCH) FullscreenCtl.request(); // touch: edge-to-edge, no browser chrome. desktop: user-chosen via toggle button.
   openCustomize('vsAI');
 });
 
@@ -7534,7 +7723,7 @@ document.getElementById('btnMenuEnd').addEventListener('click', () => {
 });
 
 document.getElementById('btnLandingTwoPlayer').addEventListener('click', () => {
-  FullscreenCtl.request();
+  if (IS_TOUCH) FullscreenCtl.request();
   openCustomize('pvp');
 });
 
