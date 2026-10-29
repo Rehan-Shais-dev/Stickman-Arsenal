@@ -1395,7 +1395,7 @@
        dedicated button: pushing the stick up-ish edge-triggers a jump.
        The up-cone is deliberately wide (see STICK_UP_CONE_DEG) because
        players crank the thumb to max radius on a rough diagonal, not a
-       precise vertical line — the gesture has to forgive that, not
+       precise vertical line ��� the gesture has to forgive that, not
        demand a compass-accurate flick. See updateStick().*/
     #touchControls {
       position: absolute;
@@ -6867,7 +6867,7 @@ function updateRoundScreen() {
 }
 
 const ALL_SCREENS = ['screenLanding','screenCircuit','screenMenu','screenCustomize','screenRound','screenPause','screenEnd',
-                     'screenRevive','screenWinReward','screenFreeStarsReward','screenShop'];
+  'screenRevive','screenWinReward','screenFreeStarsReward','screenShop','screenRagdoll'];
 
 function showScreen(id) {
   ALL_SCREENS.forEach(s => {
