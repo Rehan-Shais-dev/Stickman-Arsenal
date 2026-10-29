@@ -149,6 +149,20 @@
     }
     .screen > * { position: relative; z-index: 1; }
     .screen.hidden { display: none; }
+    .sandbox-entry-btn { background:#ffd15c; color:#322719; box-shadow:0 6px 0 #b77f19; }
+    .sandbox-entry-btn:hover { background:#ffe08a; }
+    .ragdoll-screen { background:#121820; color:#eaf3f7; justify-content:flex-start; padding:24px 28px 30px; gap:12px; }
+    .ragdoll-screen::before { background-image:radial-gradient(rgba(142,214,224,.1) 1px,transparent 1px); background-size:22px 22px; }
+    .sandbox-topbar { position:relative; z-index:1; width:min(100%,1040px); display:flex; align-items:center; justify-content:space-between; }
+    .sandbox-kicker { color:#71d5df; font:800 11px 'Nunito',sans-serif; letter-spacing:3px; }
+    .sandbox-heading { position:relative; z-index:1; text-align:center; }
+    .sandbox-heading .game-title { color:#eaf3f7; font-size:clamp(32px,6vw,58px); -webkit-text-stroke:2px #71d5df; text-shadow:0 5px 0 #0b0f14; }
+    .sandbox-heading p { color:#9cb1b9; font-size:13px; margin-top:6px; }
+    .sandbox-stage-wrap { position:relative; z-index:1; width:min(100%,1040px); flex:1; min-height:260px; }
+    #ragdollCanvas { width:100%; height:100%; display:block; border:2px solid #38515b; border-radius:14px; background:#18242d; box-shadow:0 12px 30px rgba(0,0,0,.35); touch-action:none; }
+    .sandbox-help { position:absolute; bottom:12px; left:0; right:0; text-align:center; color:#88a0aa; font:700 10px 'Nunito',sans-serif; letter-spacing:1.5px; pointer-events:none; }
+    .sandbox-help span { color:#eaf3f7; } .sandbox-help i { color:#71d5df; font-style:normal; margin:0 8px; }
+    @media(max-width:600px){ .ragdoll-screen{padding:16px 12px 18px}.sandbox-kicker{display:none}.sandbox-topbar .customize-trigger{padding:6px 10px}.sandbox-help{font-size:8px}.sandbox-help i{margin:0 3px} }
 
     .game-title {
       font-family: 'Baloo 2', sans-serif;
@@ -1992,11 +2006,29 @@
     </div>
     <div class="landing-extra-actions">
       <button class="menu-btn circuit-entry-btn" id="btnLandingCircuit">Rival Circuit</button>
+      <button class="menu-btn sandbox-entry-btn" id="btnLandingSandbox">Ragdoll Sandbox</button>
       <button class="customize-trigger landing-customize-btn" id="btnLandingCustomize">Tune your fighter</button>
     </div>
     <p class="landing-circuit-note" id="landingCircuitNote" role="status" aria-live="polite">Five rivals are waiting. Meet Mara first.</p>
   </div>
   
+  <!-- RAGDOLL SANDBOX -->
+  <div class="screen hidden ragdoll-screen" id="screenRagdoll" aria-labelledby="ragdollTitle">
+    <div class="sandbox-topbar">
+      <button class="customize-trigger" id="btnSandboxBack">← Title</button>
+      <div class="sandbox-kicker">VERLET PHYSICS LAB</div>
+      <button class="customize-trigger" id="btnSandboxReset">Reset body</button>
+    </div>
+    <div class="sandbox-heading">
+      <div class="game-title" id="ragdollTitle">RAGDOLL SANDBOX</div>
+      <p>Grab a limb. Throw the stickman. The sword follows the hand.</p>
+    </div>
+    <div class="sandbox-stage-wrap">
+      <canvas id="ragdollCanvas" aria-label="Interactive stickman ragdoll sandbox"></canvas>
+      <div class="sandbox-help"><span>DRAG</span> limbs to fling <i>•</i> <span>SPACE</span> pause <i>•</i> <span>R</span> reset</div>
+    </div>
+  </div>
+
   <!-- RIVAL CIRCUIT — five hand-built solo bouts -->
   <div class="screen hidden" id="screenCircuit" aria-labelledby="circuitTitle">
     <div class="circuit-topbar">
@@ -5003,7 +5035,7 @@ class Fighter {
       ctx.restore();
     }
 
-    // ── GLASS AERO 
+    // ��─ GLASS AERO 
     let glassAeroHandled = false;
     if (this.color === GLASS_AERO_HEX) {
       try {
@@ -5864,7 +5896,7 @@ function updateHazards(dt) {
     }
   }
 
-  // ── Spike traps (static) ──
+  // ── Spike traps (static) ─��
   for (const spike of SPIKES) {
     for (const f of fighters) {
       if (rectsOverlap(spike.x, spike.y, spike.w, spike.h,
@@ -8061,6 +8093,46 @@ syncTouchRowUI();
 document.getElementById('btnBackToTitle').addEventListener('click', () => {
   showScreen('screenLanding');
 });
+
+// ── RAGDOLL SANDBOX ───────────────────────────────────────────────
+// A small fixed-step Verlet rig keeps the body stable under large throws:
+// integrate points, solve distance constraints several times, then collide.
+const ragCanvas = document.getElementById('ragdollCanvas');
+const ragCtx = ragCanvas.getContext('2d');
+let ragDpr = 1, ragPaused = false, ragGrab = null, ragLast = performance.now();
+let ragPoints = [], ragBones = [], ragSword = null;
+function ragPoint(x,y,r=8){ return {x,y,px:x,py:y,r}; }
+function resetRagdoll(){
+  const w=ragCanvas.clientWidth, h=ragCanvas.clientHeight, cx=w*.5, top=Math.max(70,h*.22);
+  ragPoints=[ragPoint(cx,top,15),ragPoint(cx,top+48,10),ragPoint(cx,top+76,9),ragPoint(cx-24,top+54,8),ragPoint(cx+24,top+54,8),ragPoint(cx-42,top+92,8),ragPoint(cx+42,top+92,8),ragPoint(cx-16,top+113,8),ragPoint(cx+16,top+113,8)];
+  ragBones=[[0,1,40],[1,2,28],[1,3,25],[1,4,25],[3,5,45],[4,6,45],[2,7,38],[2,8,38],[3,4,48],[5,7,66],[6,8,66]];
+  ragSword={x:0,y:0,angle:0};
+}
+function resizeRagdoll(){ const rect=ragCanvas.getBoundingClientRect(); ragDpr=Math.min(devicePixelRatio||1,2); ragCanvas.width=rect.width*ragDpr; ragCanvas.height=rect.height*ragDpr; ragCtx.setTransform(ragDpr,0,0,ragDpr,0,0); resetRagdoll(); }
+function solveRagdoll(){
+  const w=ragCanvas.clientWidth,h=ragCanvas.clientHeight;
+  for(let i=0;i<ragPoints.length;i++){const p=ragPoints[i]; if(i===ragGrab) continue; const vx=(p.x-p.px)*.995, vy=(p.y-p.py)*.995; p.px=p.x;p.py=p.y;p.x+=vx;p.y+=vy+0.42;}
+  for(let pass=0;pass<7;pass++){ for(const [a,b,len] of ragBones){const p=ragPoints[a],q=ragPoints[b],dx=q.x-p.x,dy=q.y-p.y,d=Math.hypot(dx,dy)||1, n=(d-len)/d*.55; if(a!==ragGrab){p.x+=dx*n;p.y+=dy*n} if(b!==ragGrab){q.x-=dx*n;q.y-=dy*n} } for(const p of ragPoints){p.x=Math.max(p.r,Math.min(w-p.r,p.x));p.y=Math.max(p.r,Math.min(h-28-p.r,p.y));} }
+}
+function drawRagdoll(){
+  const w=ragCanvas.clientWidth,h=ragCanvas.clientHeight; ragCtx.clearRect(0,0,w,h);
+  const g=ragCtx.createLinearGradient(0,0,0,h);g.addColorStop(0,'#1e303b');g.addColorStop(1,'#10171d');ragCtx.fillStyle=g;ragCtx.fillRect(0,0,w,h);
+  ragCtx.strokeStyle='#2d4650';ragCtx.lineWidth=2;ragCtx.beginPath();ragCtx.moveTo(0,h-28);ragCtx.lineTo(w,h-28);ragCtx.stroke();
+  ragCtx.lineCap='round'; for(const [a,b] of ragBones){const p=ragPoints[a],q=ragPoints[b];ragCtx.strokeStyle='#d9edf0';ragCtx.lineWidth=7;ragCtx.beginPath();ragCtx.moveTo(p.x,p.y);ragCtx.lineTo(q.x,q.y);ragCtx.stroke();ragCtx.strokeStyle='#71d5df';ragCtx.lineWidth=3;ragCtx.stroke();}
+  for(const p of ragPoints){ragCtx.fillStyle='#f4fbfb';ragCtx.beginPath();ragCtx.arc(p.x,p.y,p.r,0,Math.PI*2);ragCtx.fill();ragCtx.fillStyle='#71d5df';ragCtx.beginPath();ragCtx.arc(p.x,p.y,3,0,Math.PI*2);ragCtx.fill();}
+  const hand=ragPoints[6], wrist=ragPoints[4]; ragSword.angle=Math.atan2(hand.y-wrist.y,hand.x-wrist.x); const sx=hand.x,sy=hand.y; ragCtx.save();ragCtx.translate(sx,sy);ragCtx.rotate(ragSword.angle);ragCtx.strokeStyle='#e7b95a';ragCtx.lineWidth=5;ragCtx.beginPath();ragCtx.moveTo(-5,0);ragCtx.lineTo(16,0);ragCtx.stroke();ragCtx.strokeStyle='#f6fbff';ragCtx.lineWidth=4;ragCtx.beginPath();ragCtx.moveTo(12,0);ragCtx.lineTo(72,0);ragCtx.stroke();ragCtx.fillStyle='#fff';ragCtx.beginPath();ragCtx.moveTo(72,0);ragCtx.lineTo(58,-5);ragCtx.lineTo(58,5);ragCtx.closePath();ragCtx.fill();ragCtx.restore();
+}
+function ragFrame(now){ const dt=Math.min((now-ragLast)/1000,.033);ragLast=now;if(!ragPaused){solveRagdoll();}drawRagdoll();requestAnimationFrame(ragFrame); }
+function ragPointer(e){const r=ragCanvas.getBoundingClientRect();return{x:e.clientX-r.left,y:e.clientY-r.top};}
+ragCanvas.addEventListener('pointerdown',e=>{const p=ragPointer(e);ragGrab=ragPoints.findIndex(q=>Math.hypot(q.x-p.x,q.y-p.y)<22);if(ragGrab>=0){ragCanvas.setPointerCapture(e.pointerId);ragPoints[ragGrab].px=p.x;ragPoints[ragGrab].py=p.y;ragPoints[ragGrab].x=p.x;ragPoints[ragGrab].y=p.y;}});
+ragCanvas.addEventListener('pointermove',e=>{if(ragGrab===null)return;const p=ragPointer(e),q=ragPoints[ragGrab];q.x=p.x;q.y=p.y;});
+ragCanvas.addEventListener('pointerup',()=>ragGrab=null);ragCanvas.addEventListener('pointercancel',()=>ragGrab=null);
+document.getElementById('btnLandingSandbox').addEventListener('click',()=>{state=GameState.MENU;showScreen('screenRagdoll');resizeRagdoll();});
+document.getElementById('btnSandboxBack').addEventListener('click',()=>showScreen('screenLanding'));
+document.getElementById('btnSandboxReset').addEventListener('click',resetRagdoll);
+window.addEventListener('resize',()=>{if(!document.getElementById('screenRagdoll').classList.contains('hidden'))resizeRagdoll();});
+document.addEventListener('keydown',e=>{if(e.key.toLowerCase()==='r'&&!document.getElementById('screenRagdoll').classList.contains('hidden'))resetRagdoll();if(e.code==='Space'&&!document.getElementById('screenRagdoll').classList.contains('hidden')){e.preventDefault();ragPaused=!ragPaused;}});
+resizeRagdoll(); requestAnimationFrame(ragFrame);
 
 document.addEventListener('click', (e) => {
   if (inputLocked) return;
